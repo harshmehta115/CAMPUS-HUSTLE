@@ -1,5 +1,7 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebase";
 import { AppProvider } from "./context/AppContext";
 import Navbar from "./components/Navbar";
 import Toast from "./components/Toast";
@@ -12,47 +14,63 @@ import ProfilePage from "./pages/ProfilePage";
 import AuthPage from "./pages/AuthPage";
 
 function App() {
-  const [authUser, setAuthUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // undefined = still checking auth state (loading)
+  // null      = not logged in
+  // object    = logged in Firebase user
+  const [firebaseUser, setFirebaseUser] = useState(undefined);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("ch_user_session");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && parsed.loggedIn) setAuthUser(parsed);
-      }
-    } catch (e) {
-      localStorage.removeItem("ch_user_session");
-    }
-    setLoading(false);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user ?? null);
+    });
+    return unsub;
   }, []);
 
-  if (loading) {
+  // Checking auth state
+  if (firebaseUser === undefined) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#05070f" }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 14, margin: "0 auto 16px",
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#05070f",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: 16,
             background: "linear-gradient(135deg, #9333ea, #3b82f6)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 24
-          }}>⚡</div>
-          <p style={{ color: "#6b7280", fontSize: 13 }}>Loading Campus Hustle...</p>
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 26,
+            animation: "pulse 1.5s ease-in-out infinite",
+          }}
+        >
+          ⚡
         </div>
+        <p style={{ color: "#6b7280", fontSize: 13 }}>Loading Campus Hustle…</p>
       </div>
     );
   }
 
-  if (!authUser) {
-    return <AuthPage onLogin={(u) => setAuthUser(u)} />;
+  // Not logged in → show auth
+  if (!firebaseUser) {
+    return <AuthPage />;
   }
 
+  // Logged in → show main app
   return (
     <HashRouter>
-      <AppProvider>
-        <div className="min-h-screen bg-navy-950">
-          <Navbar onLogout={() => { localStorage.removeItem("ch_user_session"); setAuthUser(null); }} authUser={authUser} />
+      <AppProvider firebaseUser={firebaseUser}>
+        <div className="min-h-screen" style={{ background: "#05070f" }}>
+          <Navbar />
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/explore" element={<ExplorePage />} />

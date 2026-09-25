@@ -1,11 +1,12 @@
-﻿import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from "react";
 import {
-  hustles as initialHustles,
-  myHustles as initialMyHustles,
-  notifications as initialNotifications,
-  currentUser as initialUser,
-  offers as initialOffers,
-} from "../data/mockData";
+  collection, doc, addDoc, updateDoc, deleteDoc,
+  onSnapshot, query, orderBy, serverTimestamp,
+  arrayUnion, arrayRemove, increment, writeBatch,
+} from "firebase/firestore";
+import { signOut } from "firebase/auth";
+import { db, auth } from "../firebase";
+import { hustles as seedHustles } from "../data/mockData";
 
 const AppContext = createContext(null);
 
@@ -15,25 +16,98 @@ export const useApp = () => {
   return ctx;
 };
 
-export const AppProvider = ({ children }) => {
-  const [hustles, setHustles] = useState(initialHustles);
-  const [myPosted, setMyPosted] = useState(initialMyHustles.posted);
-  const [myActive, setMyActive] = useState(initialMyHustles.active);
-  const [myCompleted, setMyCompleted] = useState(initialMyHustles.completed);
-  const [notifications, setNotifications] = useState(initialNotifications);
-  const [user, setUser] = useState({ ...initialUser, hustleCoins: initialUser.totalEarnings, withdrawalHistory: [] });
-  const [offers, setOffers] = useState(initialOffers);
-  const [toasts, setToasts] = useState([]);
+const DEFAULT_USER = {
+  id: "",
+  name: "Student",
+  avatar: "ST",
+  college: "ITBM College",
+  year: "Student",
+  bio: "Campus Hustler",
+  skills: [],
+  hustleCoins: 0,
+  totalEarnings: 0,
+  totalHustles: 0,
+  rating: 5.0,
+  reviews: 0,
+  completionRate: 100,
+  responseTime: "< 1 hour",
+  joinedAt: "September 2026",
+  social: { instagram: "", linkedin: "", github: "" },
+  withdrawalHistory: [],
+  myActive: [],
+  myCompleted: [],
+  notifications: [],
+};
 
+export const AppProvider = ({ children, firebaseUser }) => {
+  const [hustles, setHustles] = useState([]);
+  const [offers, setOffers] = useState([]);
+  const [userProfile, setUserProfile] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
+
+  // Real-time: hustles collection
+  useEffect(() => {
+    const q = query(collection(db, "hustles"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, async (snap) => {
+      if (snap.empty) {
+        // Seed demo hustles on first run so app is not empty
+        const batch = writeBatch(db);
+        seedHustles.slice(0, 8).forEach((h) => {
+          const ref = doc(collection(db, "hustles"));
+          const { id: _id, ...rest } = h;
+          batch.set(ref, { ...rest, seeded: true, createdAt: serverTimestamp() });
+        });
+        await batch.commit();
+      } else {
+        setHustles(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setDataLoading(false);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Real-time: offers collection
+  useEffect(() => {
+    const q = query(collection(db, "offers"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setOffers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
+
+  // Real-time: current user profile
+  useEffect(() => {
+    if (!firebaseUser?.uid) return;
+    const unsub = onSnapshot(doc(db, "users", firebaseUser.uid), (snap) => {
+      if (snap.exists()) {
+        setUserProfile({ ...snap.data(), id: firebaseUser.uid });
+      }
+    });
+    return unsub;
+  }, [firebaseUser?.uid]);
+
+  // Derived: hustles posted by current user
+  const myPosted = useMemo(() => {
+    if (!userProfile) return [];
+    return hustles.filter((h) => h.poster?.id === userProfile.id);
+  }, [hustles, userProfile]);
+
+  const myActive = userProfile?.myActive ?? [];
+  const myCompleted = userProfile?.myCompleted ?? [];
+  const notifications = userProfile?.notifications ?? [];
+
+  // Toast helper
   const addToast = useCallback((message, type = "success") => {
     const id = Date.now();
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500);
   }, []);
 
-  const postHustle = useCallback((form) => {
-    const newHustle = {
-      id: Date.now(),
+  // Post a hustle
+  const postHustle = useCallback(async (form) => {
+    if (!userProfile) return;
+    await addDoc(collection(db, "hustles"), {
       title: form.title,
       description: form.description,
       category: form.category,
@@ -41,112 +115,124 @@ export const AppProvider = ({ children }) => {
       deadline: form.deadline || "Flexible",
       status: "open",
       poster: {
-        id: user.id,
-        name: user.name,
-        avatar: user.avatar,
-        college: user.college,
-        rating: user.rating,
-        reviews: user.reviews,
+        id: userProfile.id,
+        name: userProfile.name,
+        avatar: userProfile.avatar,
+        college: userProfile.college,
+        rating: userProfile.rating,
+        reviews: userProfile.reviews,
       },
       offers: 0,
       views: 0,
       tags: form.tags ? form.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      createdAt: serverTimestamp(),
       postedAt: "Just now",
-    };
-    const newPosted = {
-      id: newHustle.id,
-      title: form.title,
-      category: form.category,
-      budget: newHustle.budget,
-      deadline: form.deadline || "Flexible",
-      status: "active",
-      offers: 0,
-      views: 0,
-      postedAt: "Just now",
-    };
-    setHustles((prev) => [newHustle, ...prev]);
-    setMyPosted((prev) => [newPosted, ...prev]);
-    addToast('"' + form.title + '" is now live on Campus Hustle!');
-  }, [user, addToast]);
+    });
+    addToast("Your hustle is now live on Campus Hustle!");
+  }, [userProfile, addToast]);
 
-  const deletePosted = useCallback((id) => {
-    setMyPosted((prev) => prev.filter((h) => h.id !== id));
-    setHustles((prev) => prev.filter((h) => h.id !== id));
+  // Delete a posted hustle
+  const deletePosted = useCallback(async (id) => {
+    await deleteDoc(doc(db, "hustles", id));
     addToast("Hustle deleted.", "info");
   }, [addToast]);
 
-  const markComplete = useCallback((id) => {
-    const hustle = myActive.find((h) => h.id === id);
+  // Mark active hustle as complete
+  const markComplete = useCallback(async (hustleId) => {
+    if (!userProfile) return;
+    const hustle = myActive.find((h) => h.id === hustleId);
     if (!hustle) return;
-    const coinsEarned = hustle.budget || hustle.earnings;
+    const coins = hustle.budget || hustle.earnings || 50;
     const completedEntry = {
       id: hustle.id,
       title: hustle.title,
-      category: hustle.category,
-      earnings: coinsEarned,
-      client: hustle.client,
-      clientAvatar: hustle.clientAvatar,
-      completedAt: "Just now",
+      category: hustle.category || "general",
+      earnings: coins,
+      client: hustle.client || "Unknown",
+      clientAvatar: hustle.clientAvatar || "U",
+      completedAt: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
       rating: 5,
       review: "Great work! Very professional.",
     };
-    setMyActive((prev) => prev.filter((h) => h.id !== id));
-    setMyCompleted((prev) => [completedEntry, ...prev]);
-    setUser((prev) => ({
-      ...prev,
-      totalEarnings: prev.totalEarnings + coinsEarned,
-      totalHustles: prev.totalHustles + 1,
-      hustleCoins: (prev.hustleCoins || 0) + coinsEarned,
-    }));
-    addToast("Hustle complete! +" + coinsEarned + " Hustle Coins earned");
-  }, [myActive, addToast]);
+    await updateDoc(doc(db, "users", userProfile.id), {
+      myActive: arrayRemove(hustle),
+      myCompleted: arrayUnion(completedEntry),
+      totalEarnings: increment(coins),
+      totalHustles: increment(1),
+      hustleCoins: increment(coins),
+    });
+    addToast("Hustle complete! +" + coins + " Hustle Coins earned 🪙");
+  }, [userProfile, myActive, addToast]);
 
-  const updateBio = useCallback((bio) => {
-    setUser((prev) => ({ ...prev, bio }));
+  // Update bio
+  const updateBio = useCallback(async (bio) => {
+    if (!userProfile) return;
+    await updateDoc(doc(db, "users", userProfile.id), { bio });
     addToast("Profile updated!");
-  }, [addToast]);
+  }, [userProfile, addToast]);
 
-  const updateSkills = useCallback((skills) => {
-    setUser((prev) => ({ ...prev, skills }));
-  }, []);
+  // Update skills
+  const updateSkills = useCallback(async (skills) => {
+    if (!userProfile) return;
+    await updateDoc(doc(db, "users", userProfile.id), { skills });
+  }, [userProfile]);
 
-  const addNotification = useCallback((message, type = "offer") => {
-    const newNotif = { id: Date.now(), type, message, time: "Just now", read: false };
-    setNotifications((prev) => [newNotif, ...prev]);
-  }, []);
-
-  const acceptOffer = useCallback((hustleId, offer) => {
-    setHustles((prev) => prev.map((h) => h.id === hustleId ? { ...h, status: "active" } : h));
-    setMyPosted((prev) => prev.map((h) => h.id === hustleId ? { ...h, status: "active", acceptedOffer: offer } : h));
-    addNotification("You accepted " + offer.offerBy.name + "'s offer of " + offer.price + " Hustle Coins!");
-    addToast("Offer accepted! Working with " + offer.offerBy.name);
-  }, [addToast]);
-
-  const sendOffer = useCallback((hustleId, price, message) => {
-    const newOffer = {
-      id: Date.now(),
+  // Send an offer
+  const sendOffer = useCallback(async (hustleId, price, message) => {
+    if (!userProfile) return;
+    await addDoc(collection(db, "offers"), {
       hustleId,
-      offerBy: { id: user.id, name: user.name, avatar: user.avatar, rating: user.rating, reviews: user.reviews, college: user.college },
+      offerBy: {
+        id: userProfile.id,
+        name: userProfile.name,
+        avatar: userProfile.avatar,
+        rating: userProfile.rating,
+        reviews: userProfile.reviews,
+        college: userProfile.college,
+      },
       price: Number(price),
       message,
       deliveryTime: "To be discussed",
+      createdAt: serverTimestamp(),
       postedAt: "Just now",
+    });
+    await updateDoc(doc(db, "hustles", hustleId), { offers: increment(1) });
+    addToast("Offer sent! The poster will review it shortly 📬");
+  }, [userProfile, addToast]);
+
+  // Accept an offer
+  const acceptOffer = useCallback(async (hustleId, offer) => {
+    if (!userProfile) return;
+    await updateDoc(doc(db, "hustles", hustleId), { status: "active" });
+    const notif = {
+      id: Date.now(),
+      type: "offer",
+      message: "You accepted " + offer.offerBy.name + "'s offer of " + offer.price + " Hustle Coins!",
+      time: "Just now",
+      read: false,
     };
-    setOffers((prev) => [newOffer, ...prev]);
-    setHustles((prev) => prev.map((h) => h.id === hustleId ? { ...h, offers: h.offers + 1 } : h));
-    addToast("Offer sent! The poster will review it shortly");
-  }, [user, addToast]);
+    await updateDoc(doc(db, "users", userProfile.id), { notifications: arrayUnion(notif) });
+    addToast("Offer accepted! Working with " + offer.offerBy.name + " 🤝");
+  }, [userProfile, addToast]);
 
-  const markAllRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }, []);
+  // Mark all notifications as read
+  const markAllRead = useCallback(async () => {
+    if (!userProfile) return;
+    const updated = notifications.map((n) => ({ ...n, read: true }));
+    await updateDoc(doc(db, "users", userProfile.id), { notifications: updated });
+  }, [userProfile, notifications]);
 
-  const updateProgress = useCallback((id, progress) => {
-    setMyActive((prev) => prev.map((h) => h.id === id ? { ...h, progress } : h));
-  }, []);
+  // Update active hustle progress
+  const updateProgress = useCallback(async (id, progress) => {
+    if (!userProfile) return;
+    const updated = myActive.map((h) => (h.id === id ? { ...h, progress } : h));
+    await updateDoc(doc(db, "users", userProfile.id), { myActive: updated });
+  }, [userProfile, myActive]);
 
-  const requestWithdrawal = useCallback((upiId, amount) => {
-    const coins = user.hustleCoins || 0;
+  // Request withdrawal
+  const requestWithdrawal = useCallback(async (upiId, amount) => {
+    if (!userProfile) return false;
+    const coins = userProfile.hustleCoins || 0;
     if (amount > coins) { addToast("Insufficient Hustle Coins balance.", "error"); return false; }
     const withdrawal = {
       id: Date.now(),
@@ -155,27 +241,38 @@ export const AppProvider = ({ children }) => {
       requestedAt: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
       status: "pending",
     };
-    setUser((prev) => ({
-      ...prev,
-      hustleCoins: (prev.hustleCoins || 0) - amount,
-      withdrawalHistory: [withdrawal, ...(prev.withdrawalHistory || [])],
-    }));
-    addToast("Withdrawal of " + amount + " coins requested! Processed at month-end.");
+    await updateDoc(doc(db, "users", userProfile.id), {
+      hustleCoins: increment(-amount),
+      withdrawalHistory: arrayUnion(withdrawal),
+    });
+    addToast("Withdrawal of " + amount + " coins requested! Processed at month-end. 💸");
     return true;
-  }, [user, addToast]);
+  }, [userProfile, addToast]);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem("ch_user_session");
-    window.location.reload();
+  // Add a notification
+  const addNotification = useCallback(async (message, type = "offer") => {
+    if (!userProfile) return;
+    const notif = { id: Date.now(), type, message, time: "Just now", read: false };
+    await updateDoc(doc(db, "users", userProfile.id), { notifications: arrayUnion(notif) });
+  }, [userProfile]);
+
+  // Logout
+  const logout = useCallback(async () => {
+    await signOut(auth);
   }, []);
 
+  const user = userProfile ?? { ...DEFAULT_USER, id: firebaseUser?.uid ?? "" };
+
   return (
-    <AppContext.Provider value={{
-      hustles, myPosted, myActive, myCompleted, notifications, user, offers, toasts,
-      postHustle, deletePosted, markComplete, updateBio, updateSkills,
-      acceptOffer, sendOffer, addNotification, markAllRead, updateProgress,
-      addToast, requestWithdrawal, logout,
-    }}>
+    <AppContext.Provider
+      value={{
+        hustles, myPosted, myActive, myCompleted, notifications,
+        user, offers, toasts, dataLoading,
+        postHustle, deletePosted, markComplete, updateBio, updateSkills,
+        sendOffer, acceptOffer, markAllRead, updateProgress,
+        addToast, addNotification, requestWithdrawal, logout,
+      }}
+    >
       {children}
     </AppContext.Provider>
   );
