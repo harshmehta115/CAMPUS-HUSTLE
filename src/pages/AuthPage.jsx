@@ -6,6 +6,28 @@ const GMAIL_RE = /^[a-zA-Z0-9._%+\-]+@gmail\.com$/i;
 
 const generateOtp = () => String(Math.floor(100000 + Math.random() * 900000));
 
+// Defined OUTSIDE AuthPage so React never remounts it on re-render
+const Field = ({ fieldKey, label, placeholder, type = "text", icon, value, error, onChange }) => (
+  <div>
+    <label className="text-xs font-semibold text-gray-400 mb-2 block">{label}</label>
+    <div className="relative">
+      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{icon}</div>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={"input-field pl-10 " + (error ? "border-red-500/60 bg-red-500/5" : "")}
+      />
+    </div>
+    {error && (
+      <p className="text-red-400 text-xs mt-1.5 flex items-center gap-1">
+        <X size={11} /> {error}
+      </p>
+    )}
+  </div>
+);
+
 const AuthPage = ({ onLogin }) => {
   const [step, setStep] = useState("signup");
   const [form, setForm] = useState({ name: "", phone: "", email: "" });
@@ -21,10 +43,15 @@ const AuthPage = ({ onLogin }) => {
 
   useEffect(() => () => clearInterval(timerRef.current), []);
 
+  const handleChange = (field) => (e) => {
+    setForm((f) => ({ ...f, [field]: e.target.value }));
+    setErrors((er) => ({ ...er, [field]: "" }));
+  };
+
   const startCooldown = () => {
     setResendCooldown(30);
     timerRef.current = setInterval(() => {
-      setResendCooldown(prev => {
+      setResendCooldown((prev) => {
         if (prev <= 1) { clearInterval(timerRef.current); return 0; }
         return prev - 1;
       });
@@ -83,7 +110,7 @@ const AuthPage = ({ onLogin }) => {
         name: form.name.trim(),
         phone: form.phone,
         email: form.email,
-        avatar: form.name.trim().split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
+        avatar: form.name.trim().split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
         loggedIn: true,
       };
       localStorage.setItem("ch_user_session", JSON.stringify(userData));
@@ -101,27 +128,6 @@ const AuthPage = ({ onLogin }) => {
     startCooldown();
     inputRefs.current[0]?.focus();
   };
-
-  const Field = ({ fieldKey, label, placeholder, type = "text", icon }) => (
-    <div>
-      <label className="text-xs font-semibold text-gray-400 mb-2 block">{label}</label>
-      <div className="relative">
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{icon}</div>
-        <input
-          type={type}
-          value={form[fieldKey]}
-          onChange={e => { setForm(f => ({ ...f, [fieldKey]: e.target.value })); setErrors(er => ({ ...er, [fieldKey]: "" })); }}
-          placeholder={placeholder}
-          className={`input-field pl-10 ${errors[fieldKey] ? "border-red-500/60 bg-red-500/5" : ""}`}
-        />
-      </div>
-      {errors[fieldKey] && (
-        <p className="text-red-400 text-xs mt-1.5 flex items-center gap-1">
-          <X size={11} /> {errors[fieldKey]}
-        </p>
-      )}
-    </div>
-  );
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden" style={{ background: "#05070f" }}>
@@ -149,9 +155,12 @@ const AuthPage = ({ onLogin }) => {
             </div>
 
             <form onSubmit={handleSignup} className="space-y-4">
-              <Field fieldKey="name" label="Full Name" placeholder="Your full name" type="text" icon={<User size={15} />} />
-              <Field fieldKey="phone" label="Phone Number" placeholder="10-digit mobile number" type="tel" icon={<Phone size={15} />} />
-              <Field fieldKey="email" label="Gmail Address" placeholder="yourname@gmail.com" type="email" icon={<Mail size={15} />} />
+              <Field fieldKey="name" label="Full Name" placeholder="Your full name" type="text"
+                icon={<User size={15} />} value={form.name} error={errors.name} onChange={handleChange("name")} />
+              <Field fieldKey="phone" label="Phone Number" placeholder="10-digit mobile number" type="tel"
+                icon={<Phone size={15} />} value={form.phone} error={errors.phone} onChange={handleChange("phone")} />
+              <Field fieldKey="email" label="Gmail Address" placeholder="yourname@gmail.com" type="email"
+                icon={<Mail size={15} />} value={form.email} error={errors.email} onChange={handleChange("email")} />
               <button type="submit" className="btn-primary w-full justify-center py-3.5 mt-2">
                 Get OTP <ArrowRight size={16} />
               </button>
@@ -213,20 +222,20 @@ const AuthPage = ({ onLogin }) => {
                   {otp.map((digit, idx) => (
                     <input
                       key={idx}
-                      ref={el => (inputRefs.current[idx] = el)}
+                      ref={(el) => (inputRefs.current[idx] = el)}
                       type="text"
                       inputMode="numeric"
                       maxLength={1}
                       value={digit}
-                      onChange={e => handleOtpChange(idx, e.target.value)}
-                      onKeyDown={e => handleOtpKeyDown(idx, e)}
+                      onChange={(e) => handleOtpChange(idx, e.target.value)}
+                      onKeyDown={(e) => handleOtpKeyDown(idx, e)}
                       style={{
                         width: "3rem", height: "3.5rem",
                         textAlign: "center", fontSize: "1.25rem", fontWeight: 900,
                         borderRadius: "0.75rem", outline: "none",
                         transition: "all 0.15s",
                         background: digit ? "rgba(168,85,247,0.2)" : "rgba(255,255,255,0.05)",
-                        border: `2px solid ${otpError ? "rgba(239,68,68,0.6)" : digit ? "rgba(168,85,247,0.7)" : "rgba(255,255,255,0.15)"}`,
+                        border: "2px solid " + (otpError ? "rgba(239,68,68,0.6)" : digit ? "rgba(168,85,247,0.7)" : "rgba(255,255,255,0.15)"),
                         color: "white",
                       }}
                     />
@@ -241,9 +250,9 @@ const AuthPage = ({ onLogin }) => {
 
                 <button
                   onClick={handleVerify}
-                  disabled={otp.some(d => !d)}
+                  disabled={otp.some((d) => !d)}
                   className="btn-primary w-full justify-center py-3.5 mb-4"
-                  style={{ opacity: otp.some(d => !d) ? 0.4 : 1, cursor: otp.some(d => !d) ? "not-allowed" : "pointer" }}
+                  style={{ opacity: otp.some((d) => !d) ? 0.4 : 1, cursor: otp.some((d) => !d) ? "not-allowed" : "pointer" }}
                 >
                   <CheckCircle2 size={16} /> Verify &amp; Enter
                 </button>
@@ -262,7 +271,7 @@ const AuthPage = ({ onLogin }) => {
                     style={{ color: resendCooldown > 0 ? "#4b5563" : "#c084fc", cursor: resendCooldown > 0 ? "not-allowed" : "pointer" }}
                   >
                     <RefreshCw size={12} />
-                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend OTP"}
+                    {resendCooldown > 0 ? "Resend in " + resendCooldown + "s" : "Resend OTP"}
                   </button>
                 </div>
               </>
