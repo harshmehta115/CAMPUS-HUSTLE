@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo } from "react";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp,
+  onSnapshot, query, serverTimestamp,
   arrayUnion, arrayRemove, increment, writeBatch,
 } from "firebase/firestore";
 import { signOut } from "firebase/auth";
@@ -47,9 +47,10 @@ export const AppProvider = ({ children, firebaseUser }) => {
   const [dataLoading, setDataLoading] = useState(true);
 
   // Real-time: hustles collection
+  // NOTE: No orderBy here — some docs may lack createdAt and orderBy silently excludes them.
+  // We sort client-side instead so ALL hustles are always visible.
   useEffect(() => {
-    const q = query(collection(db, "hustles"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, async (snap) => {
+    const unsub = onSnapshot(collection(db, "hustles"), async (snap) => {
       if (snap.empty) {
         // Seed demo hustles on first run so app is not empty
         const batch = writeBatch(db);
@@ -60,18 +61,28 @@ export const AppProvider = ({ children, firebaseUser }) => {
         });
         await batch.commit();
       } else {
-        setHustles(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        // Sort client-side: newest first (fallback to doc id if no createdAt)
+        const sorted = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => {
+            const aTime = a.createdAt?.seconds ?? 0;
+            const bTime = b.createdAt?.seconds ?? 0;
+            return bTime - aTime;
+          });
+        setHustles(sorted);
         setDataLoading(false);
       }
     });
     return unsub;
   }, []);
 
-  // Real-time: offers collection
+  // Real-time: offers collection (no orderBy to avoid missing-field exclusions)
   useEffect(() => {
-    const q = query(collection(db, "offers"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      setOffers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const unsub = onSnapshot(collection(db, "offers"), (snap) => {
+      const sorted = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+      setOffers(sorted);
     });
     return unsub;
   }, []);

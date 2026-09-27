@@ -17,7 +17,7 @@ const ExplorePage = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [budgetMax, setBudgetMax] = useState(2000);
   const [viewMode, setViewMode] = useState('grid');
-  const [selectedStatus, setSelectedStatus] = useState('open');
+  const [selectedStatus, setSelectedStatus] = useState('all');
 
   // Sync URL params when they change (e.g. click category from home)
   useEffect(() => {
@@ -38,11 +38,12 @@ const ExplorePage = () => {
   const filteredHustles = hustles
     .filter((h) => {
       const matchSearch = !search ||
-        h.title.toLowerCase().includes(search.toLowerCase()) ||
-        h.description.toLowerCase().includes(search.toLowerCase()) ||
-        h.tags.some((t) => t.toLowerCase().includes(search.toLowerCase()));
+        h.title?.toLowerCase().includes(search.toLowerCase()) ||
+        h.description?.toLowerCase().includes(search.toLowerCase()) ||
+        (h.tags || []).some((t) => t.toLowerCase().includes(search.toLowerCase()));
       const matchCat = selectedCat === 'all' || h.category === selectedCat;
-      const matchBudget = h.budget.min <= budgetMax;
+      const budgetMin = h.budget?.min ?? h.budget ?? 0;  // handle both {min,max} and plain number
+      const matchBudget = budgetMin <= budgetMax;
       const matchStatus = selectedStatus === 'all' || h.status === selectedStatus;
       return matchSearch && matchCat && matchBudget && matchStatus;
     })
